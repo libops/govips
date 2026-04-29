@@ -7,8 +7,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/net/html/charset"
@@ -358,6 +361,47 @@ func vipsLoadFromBuffer(buf []byte, params *ImportParams) (*C.VipsImage, ImageTy
 		return nil, currentType, originalType, handleImageError(importParams.outputImage)
 	}
 
+	return importParams.outputImage, currentType, originalType, nil
+}
+
+func determineImageTypeFromFilePrefix(file string) ImageType {
+	f, err := os.Open(file)
+	if err != nil {
+		return ImageTypeUnknown
+	}
+	defer f.Close()
+
+	buf := make([]byte, 1024)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return ImageTypeUnknown
+	}
+	return DetermineImageType(buf[:n])
+}
+
+func vipsLoadFromFile(file string, params *ImportParams) (*C.VipsImage, ImageType, ImageType, error) {
+	if strings.ContainsRune(file, 0) {
+		return nil, ImageTypeUnknown, ImageTypeUnknown, fmt.Errorf("filename contains NUL")
+	}
+
+	originalType := determineImageTypeFromFilePrefix(file)
+	currentType := originalType
+	if isNeedToChangeLoaderToMagick(originalType) {
+		currentType = ImageTypeMagick
+	}
+
+	cfile := C.CString(file)
+	defer freeCString(cfile)
+
+	importParams := createImportParams(currentType, params)
+	if err := C.load_from_file(&importParams, cfile); err != 0 {
+		return nil, currentType, originalType, handleImageError(importParams.outputImage)
+	}
+
+	currentType = vipsDetermineImageTypeFromMetaLoader(importParams.outputImage)
+	if originalType == ImageTypeUnknown {
+		originalType = currentType
+	}
 	return importParams.outputImage, currentType, originalType, nil
 }
 

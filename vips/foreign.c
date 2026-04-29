@@ -1,6 +1,7 @@
 #include "foreign.h"
 
 #include "lang.h"
+#include <string.h>
 
 void set_bool_param(Param *p, gboolean b) {
   p->type = PARAM_TYPE_BOOL;
@@ -192,6 +193,112 @@ int load_buffer(const char *operationName, void *buf, size_t len,
   vips_area_unref(VIPS_AREA(blob));
 
   if (setLoadOptions(operation, params)) {
+    vips_object_unref_outputs(VIPS_OBJECT(operation));
+    g_object_unref(operation);
+    return 1;
+  }
+
+  if (vips_cache_operation_buildp(&operation)) {
+    vips_object_unref_outputs(VIPS_OBJECT(operation));
+    g_object_unref(operation);
+    return 1;
+  }
+
+  g_object_get(VIPS_OBJECT(operation), "out", &params->outputImage, NULL);
+
+  vips_object_unref_outputs(VIPS_OBJECT(operation));
+  g_object_unref(operation);
+
+  return 0;
+}
+
+SetLoadOptionsFn load_options_for_type(ImageType imageType) {
+  switch (imageType) {
+    case JPEG:
+      return set_jpegload_options;
+    case PNG:
+      return set_pngload_options;
+    case WEBP:
+      return set_webpload_options;
+    case TIFF:
+      return set_tiffload_options;
+    case GIF:
+      return set_gifload_options;
+    case PDF:
+      return set_pdfload_options;
+    case SVG:
+      return set_svgload_options;
+    case HEIF:
+    case AVIF:
+      return set_heifload_options;
+    case JP2K:
+      return set_jp2kload_options;
+    case JXL:
+      return set_jxlload_options;
+    case MAGICK:
+      return set_magickload_options;
+    default:
+      return NULL;
+  }
+}
+
+typedef struct LoadOptionEntry {
+  const char *prefix;
+  size_t prefixLen;
+  SetLoadOptionsFn fn;
+} LoadOptionEntry;
+
+static const LoadOptionEntry load_option_table[] = {
+    {"jpegload", sizeof("jpegload") - 1, set_jpegload_options},
+    {"pngload", sizeof("pngload") - 1, set_pngload_options},
+    {"webpload", sizeof("webpload") - 1, set_webpload_options},
+    {"tiffload", sizeof("tiffload") - 1, set_tiffload_options},
+    {"gifload", sizeof("gifload") - 1, set_gifload_options},
+    {"pdfload", sizeof("pdfload") - 1, set_pdfload_options},
+    {"svgload", sizeof("svgload") - 1, set_svgload_options},
+    {"heifload", sizeof("heifload") - 1, set_heifload_options},
+    {"jp2kload", sizeof("jp2kload") - 1, set_jp2kload_options},
+    {"jxlload", sizeof("jxlload") - 1, set_jxlload_options},
+    {"magickload", sizeof("magickload") - 1, set_magickload_options},
+};
+
+SetLoadOptionsFn load_options_for_operation(const char *operationName) {
+  if (!operationName) {
+    return NULL;
+  }
+
+  size_t n = sizeof(load_option_table) / sizeof(load_option_table[0]);
+  for (size_t i = 0; i < n; i++) {
+    if (strncmp(operationName, load_option_table[i].prefix,
+                load_option_table[i].prefixLen) == 0) {
+      return load_option_table[i].fn;
+    }
+  }
+  return NULL;
+}
+
+int load_from_file(LoadParams *params, const char *filename) {
+  const char *operationName = vips_foreign_find_load(filename);
+  if (!operationName) {
+    return 1;
+  }
+
+  VipsOperation *operation = vips_operation_new(operationName);
+  if (!operation) {
+    return 1;
+  }
+
+  if (vips_object_set(VIPS_OBJECT(operation), "filename", filename, NULL)) {
+    vips_object_unref_outputs(VIPS_OBJECT(operation));
+    g_object_unref(operation);
+    return 1;
+  }
+
+  SetLoadOptionsFn setLoadOptions = load_options_for_type(params->inputFormat);
+  if (!setLoadOptions) {
+    setLoadOptions = load_options_for_operation(operationName);
+  }
+  if (setLoadOptions && setLoadOptions(operation, params)) {
     vips_object_unref_outputs(VIPS_OBJECT(operation));
     g_object_unref(operation);
     return 1;

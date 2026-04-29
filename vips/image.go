@@ -473,6 +473,11 @@ func NewImageFromFile(file string) (*ImageRef, error) {
 	return LoadImageFromFile(file, nil)
 }
 
+// NewImageFromFileDirect loads an image through libvips' file loader and creates a new ImageRef.
+func NewImageFromFileDirect(file string) (*ImageRef, error) {
+	return LoadImageFromFileDirect(file, nil)
+}
+
 // LoadImageFromFile loads an image from file and creates a new ImageRef
 func LoadImageFromFile(file string, params *ImportParams) (*ImageRef, error) {
 	buf, err := os.ReadFile(file)
@@ -482,6 +487,31 @@ func LoadImageFromFile(file string, params *ImportParams) (*ImageRef, error) {
 
 	govipsLog("govips", LogLevelDebug, fmt.Sprintf("creating imageRef from file %s", file))
 	return LoadImageFromBuffer(buf, params)
+}
+
+// LoadImageFromFileDirect loads an image through libvips' file loader and creates a new ImageRef.
+// Unlike LoadImageFromFile, it does not retain the original file bytes on the ImageRef.
+// The source file must remain readable until the returned ImageRef is closed, because libvips may
+// read from the file lazily.
+func LoadImageFromFileDirect(file string, params *ImportParams) (*ImageRef, error) {
+	if err := startupIfNeeded(); err != nil {
+		return nil, err
+	}
+
+	if params == nil {
+		params = NewImportParams()
+	}
+
+	govipsLog("govips", LogLevelDebug, fmt.Sprintf("creating imageRef from direct file load %s", file))
+	vipsImage, currentFormat, originalFormat, err := vipsLoadFromFile(file, params)
+	if err != nil {
+		return nil, err
+	}
+
+	ref := newImageRef(vipsImage, currentFormat, originalFormat, nil)
+
+	govipsLog("govips", LogLevelDebug, fmt.Sprintf("created imageRef %p", ref))
+	return ref, nil
 }
 
 // NewImageFromBuffer loads an image buffer and creates a new Image
